@@ -9,7 +9,7 @@ import io
 app = Flask(__name__)
 
 # --- НАСТРОЙКИ ---
-MODEL_FILENAME = 'cifar10_subset_model.h5'
+MODEL_FILENAME = 'cnn_frog_bird_cat.h5'
 
 # --- ДИАГНОСТИКА ФАЙЛОВ (ЭТО ПОМОЖЕТ НАЙТИ ОШИБКУ) ---
 print("--- ЗАПУСК СЕРВЕРА ---")
@@ -77,3 +77,4 @@ def predict():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
+
