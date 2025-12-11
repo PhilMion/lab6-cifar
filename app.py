@@ -1,5 +1,12 @@
 import os
 import sys
+
+# --- ОПТИМІЗАЦІЯ ПАМ'ЯТІ ---
+# Це критично важливо для Render Free Tier.
+# Ми забороняємо TensorFlow шукати GPU, що економить ~200МБ RAM.
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Прибираємо зайві логи TF
+
 from flask import Flask, request, jsonify
 import tensorflow as tf
 import numpy as np
@@ -8,73 +15,87 @@ import io
 
 app = Flask(__name__)
 
-# --- НАСТРОЙКИ ---
+# --- НАЛАШТУВАННЯ ---
+# Ім'я файлу точно як на GitHub
 MODEL_FILENAME = 'cnn_frog_bird_cat.h5'
 
-# --- ДИАГНОСТИКА ФАЙЛОВ (ЭТО ПОМОЖЕТ НАЙТИ ОШИБКУ) ---
+# --- ДІАГНОСТИКА ---
 print("--- ЗАПУСК СЕРВЕРА ---")
-print(f"Текущая папка: {os.getcwd()}")
-print("Файлы в папке:", os.listdir(os.getcwd()))
+print(f"Робоча папка: {os.getcwd()}")
+print("Файли в папці:", os.listdir(os.getcwd()))
 
-# Проверяем полный путь
+# --- ЗАВАНТАЖЕННЯ МОДЕЛІ ---
 MODEL_PATH = os.path.join(os.getcwd(), MODEL_FILENAME)
-
 model = None
 
-if os.path.exists(MODEL_PATH):
-    print(f"Файл модели найден: {MODEL_PATH}")
-    try:
+try:
+    if os.path.exists(MODEL_PATH):
+        print(f"Завантажую модель з: {MODEL_PATH} ...")
         model = tf.keras.models.load_model(MODEL_PATH)
-        print("Модель успешно загружена!")
-    except Exception as e:
-        print(f"ОШИБКА загрузки модели: {e}")
-else:
-    print(f"ОШИБКА: Файл {MODEL_FILENAME} НЕ НАЙДЕН!")
-    # Мы не останавливаем сервер, чтобы ты мог увидеть логи,
-    # но предсказания работать не будут.
+        print("МОДЕЛЬ УСПІШНО ЗАВАНТАЖЕНА!")
+    else:
+        print(f"КРИТИЧНА ПОМИЛКА: Файл {MODEL_FILENAME} не знайдено!")
+except Exception as e:
+    print(f"КРИТИЧНА ПОМИЛКА при завантаженні моделі: {e}")
 
+# Класи з твоєї лабораторної
 CLASSES = {0: 'Bird (Птах)', 1: 'Cat (Кіт)', 2: 'Frog (Жаба)'}
 
 def prepare_image(image_bytes):
-    img = Image.open(io.BytesIO(image_bytes))
-    img = img.resize((32, 32))
-    img_array = np.array(img) / 255.0
-    if img_array.shape[-1] == 4:
-        img_array = img_array[..., :3]
-    img_array = np.expand_dims(img_array, axis=0)
-    return img_array
+    """Обробка зображення перед подачею в нейромережу"""
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img = img.resize((32, 32)) # Розмір як при навчанні
+        img_array = np.array(img) / 255.0 # Нормалізація
+        
+        # Якщо картинка має альфа-канал (прозорість), прибираємо його
+        if img_array.shape[-1] == 4:
+            img_array = img_array[..., :3]
+            
+        # Додаємо вимір batch (1, 32, 32, 3)
+        img_array = np.expand_dims(img_array, axis=0)
+        return img_array
+    except Exception as e:
+        print(f"Помилка обробки зображення: {e}")
+        return None
 
 @app.route('/')
 def home():
-    # Показываем статус на главной странице
-    if model:
-        return "Service is Running! Model loaded."
-    else:
-        files = str(os.listdir(os.getcwd()))
-        return f"Service Running, BUT MODEL NOT FOUND. Files here: {files}"
+    status = "Model LOADED OK" if model else "Model NOT FOUND"
+    return f"Status: {status}. Files: {str(os.listdir(os.getcwd()))}"
 
 @app.route('/predict', methods=['POST'])
 def predict():
     if not model:
         return jsonify({'error': 'Model not loaded on server'}), 500
 
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+
     try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file part'}), 400
         file = request.files['file']
         img_array = prepare_image(file.read())
+        
+        if img_array is None:
+            return jsonify({'error': 'Invalid image format'}), 400
+
+        # Передбачення
         prediction = model.predict(img_array)
         class_id = np.argmax(prediction, axis=1)[0]
         confidence = float(np.max(prediction))
+        
         result = {
             'class_id': int(class_id),
             'class_name': CLASSES.get(class_id, "Unknown"),
             'confidence': confidence
         }
         return jsonify(result)
+
     except Exception as e:
+        # Логуємо помилку на сервері
+        print(f"Помилка під час predict: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
+    # Запуск
     app.run(debug=True, host='0.0.0.0', port=5000)
-
